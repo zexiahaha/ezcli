@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::env::home_dir;
+use std::fs::create_dir_all;
 use std::mem;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
@@ -25,7 +26,7 @@ struct Cli {
     del_project: bool,
 }
 
-fn main() {
+fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
     if cli.find_cl {
@@ -55,7 +56,16 @@ fn main() {
         println!("file path is {s}");
 
         if s.as_str().ends_with("vcvarsall.bat") {
+            if let Some(home) = home_dir() {
+                let config_file_dir = home.join(".ezcli");
+                let config_file = config_file_dir.join("/ezcli_config.json");
+            } else {
+                println!("get home dir failed!");
+            }
         } else {
+            println!("current file is not cl vcvarsall.bat!");
         }
     }
+
+    Ok(())
 }

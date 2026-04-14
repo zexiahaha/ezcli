@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env::home_dir;
 use std::fs::{self, create_dir_all};
 use std::mem;
+use std::path::PathBuf;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
@@ -71,8 +72,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
             if let Some(home) = home_dir() {
-                let config_file_dir = home.join(".ezcli");
-                let config_file = config_file_dir.join("/ezcli.toml");
+                let config_file = get_config_path();
+                let config_file_dir = config_file.parent().unwrap();
 
                 if !config_file_dir.exists() {
                     create_dir_all(config_file_dir)?;
@@ -90,6 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     println!("already create new ezcli.toml!");
                 } else {
+                    let mut config = load_config();
+                    config.vcvars_path = cl_str;
+                    save_config(&config);
                 }
             } else {
                 println!("get home dir failed!");
@@ -100,4 +104,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+pub fn get_config_path() -> PathBuf {
+    let home = home_dir().expect("get home dir failed!");
+    home.join(".ezcli").join("/ezcli.toml")
+}
+
+pub fn load_config() -> Config {
+    let config_path = get_config_path();
+    let content = fs::read_to_string(&config_path).expect("read config failed!");
+    toml::from_str(&content).expect("parse config failed!")
+}
+
+pub fn save_config(config: &Config) {
+    let config_path = get_config_path();
+    let content = toml::to_string_pretty(config).unwrap();
+    fs::write(config_path, content).expect("save config failed!");
+}
+
+pub fn add_project(config: &mut Config, name: &str, path: &str) {
+    let exists = config.projects.iter().any(|p| p.name == name);
+    if exists {
+        println!("project {name} already exists!");
+    }
+
+    config.projects.push(Project {
+        name: name.to_string(),
+        path: path.to_string(),
+    });
+}
+
+pub fn delete_project(config: &mut Config, name: &str) -> bool {
+    let old_len = config.projects.len();
+    config.projects.retain(|p| p.name != name);
+    old_len != config.projects.len()
+}
+
+pub fn update_project_path(config: &mut Config, name: &str, new_path: &str) -> bool {
+    match config.projects.iter_mut().find(|p| p.name == name) {
+        Some(proj) => {
+            proj.path = new_path.to_string();
+            true
+        }
+        None => false,
+    }
+}
+
+pub fn find_project(config: &Config, name: &str) -> Option<&Project> {
+    config.projects.iter().find(|p| p.name == name)
 }

@@ -1,9 +1,11 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::env::home_dir;
 use std::fs::{self, create_dir_all};
 use std::mem;
 use std::path::PathBuf;
+use std::process::Command;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
@@ -11,7 +13,7 @@ use windows::core::PWSTR;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
-    pub vcvars_path: String,
+    pub vc_path: String,
     pub default_arch: String,
     pub projects: Vec<Project>,
 }
@@ -32,13 +34,22 @@ struct Cli {
     show_cl: bool,
 
     #[arg(short, long)]
+    load_cl: bool,
+
+    #[arg(short, long)]
     add_project: Option<String>,
 
     #[arg(short, long)]
-    path_to_project: Option<String>,
+    path_project: Option<String>,
 
     #[arg(short, long)]
     del_project: bool,
+
+    #[arg(short = 'w', long)]
+    show_project: Option<String>,
+
+    #[arg(short = 'c', long)]
+    switch_project: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -71,35 +82,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("file path is {cl_str}");
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
-            if let Some(home) = home_dir() {
-                let config_file = get_config_path();
-                let config_file_dir = config_file.parent().unwrap();
+            let config_file = get_config_path();
+            let config_file_dir = config_file.parent().unwrap();
 
-                if !config_file_dir.exists() {
-                    create_dir_all(config_file_dir)?;
-                }
-                if !config_file.exists() {
-                    let default_config = Config {
-                        vcvars_path: cl_str,
-                        default_arch: "x64".to_string(),
-                        projects: vec![],
-                    };
+            if !config_file_dir.exists() {
+                create_dir_all(config_file_dir)?;
+            }
+            if !config_file.exists() {
+                let default_config = Config {
+                    vc_path: cl_str,
+                    default_arch: "x64".to_string(),
+                    projects: vec![],
+                };
 
-                    let toml_content = toml::to_string_pretty(&default_config)?;
+                let toml_content = toml::to_string_pretty(&default_config)?;
 
-                    fs::write(&config_file, toml_content)?;
+                fs::write(&config_file, toml_content)?;
 
-                    println!("already create new ezcli.toml!");
-                } else {
-                    let mut config = load_config();
-                    config.vcvars_path = cl_str;
-                    save_config(&config);
-                }
+                println!("already create new ezcli.toml!");
             } else {
-                println!("get home dir failed!");
+                let mut config = load_config();
+                config.vc_path = cl_str;
+                save_config(&config);
             }
         } else {
             println!("current file is not cl vcvarsall.bat!");
+        }
+    }
+
+    if cli.show_cl {
+        let config = load_config();
+        println!("{}", config.vc_path.as_str());
+    }
+
+    if cli.load_cl {
+        let config = load_config();
+        if !config.vc_path.is_empty() {
+            let vc = config.vc_path;
+            let arch = config.default_arch;
+
+            let command_str = if env::var("ConEmuDir").is_ok() {
+                println!("cmder environment detected!");
+                format!(r#"%ConEmuDir%\..\init.bat && {} {}"#, vc, arch)
+            } else {
+                println!("raw cmd environment");
+                format!(r#""{}" {}"#, vc, arch)
+            };
+
+            Command::new("cmd.exe")
+                .arg("/k")
+                .arg(command_str)
+                .status()
+                .unwrap();
+        } else {
+            println!("no vc_path exists, please run find_cl!");
         }
     }
 
@@ -151,6 +187,6 @@ pub fn update_project_path(config: &mut Config, name: &str, new_path: &str) -> b
     }
 }
 
-pub fn find_project(config: &Config, name: &str) -> Option<&Project> {
+pub fn find_project<'a>(config: &'a Config, name: &'a str) -> Option<&'a Project> {
     config.projects.iter().find(|p| p.name == name)
 }

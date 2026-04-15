@@ -8,4 +8,4 @@ clap = { version = "4.6.0", features = ["derive"] }
 inquire = "0.9.4"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
-windows = { version = "0.62.2", features = ["Win32_UI_Controls_Dialogs"] }
+windows = { version = "0.62.2", features = ["Win32_UI_Controls_Dialogs", "Win32_UI_Shell_Common", "Win32_System_Console"] }

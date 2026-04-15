@@ -7,10 +7,17 @@ use std::mem;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
+use windows::Win32::System::Console::GetConsoleWindow;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
+use windows::Win32::UI::Shell::{
+    BIF_BROWSEINCLUDEURLS, BIF_NEWDIALOGSTYLE, BIF_NONEWFOLDERBUTTON, BROWSEINFOW,
+    SHBrowseForFolderW, SHGetPathFromIDListW,
+};
 use windows::core::PWSTR;
+
+const MAX_PATH: u32 = 260;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -40,14 +47,11 @@ struct Cli {
     #[arg(short, long)]
     add_project: Option<String>,
 
-    #[arg(short, long)]
-    path_project: Option<String>,
+    #[arg(short = 'w', long)]
+    show_project: Option<String>,
 
     #[arg(short, long)]
     del_project: bool,
-
-    #[arg(short = 'w', long)]
-    show_project: Option<String>,
 
     #[arg(short = 'c', long)]
     switch_project: Option<String>,
@@ -57,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     if cli.find_cl {
-        let mut file_buf = [0u16; 260];
+        let mut file_buf = [0u16; MAX_PATH as usize];
 
         let mut ofn = OPENFILENAMEW {
             lStructSize: mem::size_of::<OPENFILENAMEW>() as u32,
@@ -133,8 +137,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!(r#"/s /k "call "{}" {}""#, vc, arch)
             };
 
-            println!("{}", &command_str);
-
             Command::new("cmd.exe")
                 .raw_arg(command_str)
                 .status()
@@ -144,17 +146,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    if let Some(name) = cli.add_project.as_deref() {
+        println!("add new project: {name}");
+        println!("please find project path");
+
+        let str = unsafe {
+            let hwnd = GetConsoleWindow();
+
+            let mut bi = BROWSEINFOW {
+                hwndOwner: hwnd,
+                ulFlags: BIF_NEWDIALOGSTYLE | BIF_BROWSEINCLUDEURLS | BIF_NONEWFOLDERBUTTON,
+                ..Default::default()
+            };
+
+            let pidl = SHBrowseForFolderW(&mut bi);
+
+            let mut buffer = [0u16; MAX_PATH as usize];
+            if pidl.is_null() || !SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
+                None
+            } else {
+                if SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
+                    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+                    Some(String::from_utf16_lossy(&buffer[..len]))
+                } else {
+                    None
+                }
+            }
+        };
+
+        let project_path_str = str.unwrap_or_else(|| "".to_string());
+
+        let mut config = load_config();
+
+        add_project(&mut config, name, &project_path_str);
+    }
     Ok(())
 }
 
 pub fn get_config_path() -> PathBuf {
-    let home = home_dir().expect("get home dir failed!");
-    println!("{}", home.to_str().unwrap_or("home dir print failed"));
-    home.join(".ezcli").join("/ezcli.toml")
+    let home = if let Some(home) = home_dir() {
+        println!("home: {}", home.to_str().unwrap_or("home dir print failed"));
+        home.join(".ezcli").join("ezcli.toml")
+    } else {
+        println!("get home dir failed!");
+        PathBuf::new()
+    };
+    home
 }
 
 pub fn load_config() -> Config {
     let config_path = get_config_path();
+    println!("config_path: {:?}", &config_path.to_str());
     let content = fs::read_to_string(&config_path).expect("read config failed!");
     toml::from_str(&content).expect("parse config failed!")
 }

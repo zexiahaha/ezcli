@@ -4,6 +4,7 @@ use std::env;
 use std::env::home_dir;
 use std::fs::{self, create_dir_all};
 use std::mem;
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use windows::Win32::UI::Controls::Dialogs::{
@@ -123,15 +124,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let command_str = if env::var("ConEmuDir").is_ok() {
                 println!("cmder environment detected!");
-                format!(r#"%ConEmuDir%\..\init.bat && {} {}"#, vc, arch)
+                format!(
+                    r#"/s /k "call "%ConEmuDir%\..\init.bat" && call "{}" {}""#,
+                    vc, arch
+                )
             } else {
                 println!("raw cmd environment");
-                format!(r#""{}" {}"#, vc, arch)
+                format!(r#"/s /k "call "{}" {}""#, vc, arch)
             };
 
+            println!("{}", &command_str);
+
             Command::new("cmd.exe")
-                .arg("/k")
-                .arg(command_str)
+                .raw_arg(command_str)
                 .status()
                 .unwrap();
         } else {
@@ -144,6 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub fn get_config_path() -> PathBuf {
     let home = home_dir().expect("get home dir failed!");
+    println!("{}", home.to_str().unwrap_or("home dir print failed"));
     home.join(".ezcli").join("/ezcli.toml")
 }
 

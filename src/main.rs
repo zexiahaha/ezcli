@@ -248,7 +248,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    if cli.switch_project {}
+    if cli.switch_project {
+        let config = load_config().map_err(|_| "load config file failed!".red())?;
+        let projects_map: HashMap<String, String> = config
+            .projects
+            .iter()
+            .map(|p| (p.name.clone(), p.path.clone()))
+            .collect();
+        let project_names: Vec<&str> = projects_map.keys().map(|s| s.as_str()).collect();
+
+        let ans: Result<&str, InquireError> =
+            Select::new("select to switch", project_names).prompt();
+
+        match ans {
+            Ok(choice) => {
+                let path = projects_map
+                    .get(choice)
+                    .ok_or("can't find the project".red())?;
+                println!("\n project {} path is {}", choice.green(), path.green());
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    "There was an error when select project to switch, please try again"
+                        .red()
+                        .bold()
+                )
+            }
+        }
+    }
     Ok(())
 }
 

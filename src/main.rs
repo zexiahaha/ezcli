@@ -313,8 +313,14 @@ call "{}" x64
 
     let cl_ps1_str = format!(
         r#"
-& "{}" x64
-        "#,
+  $cmd = "`"{}`" x64 && set"
+  cmd /c $cmd | ForEach-Object {{
+      if ($_ -match '^([^=]+)=(.*)$') {{
+          Set-Item -Path "env:$($matches[1])" -Value $matches[2]
+      }}
+  }}
+  Write-Host "Visual Studio 2026 Developer Command Prompt environment already loaded" -ForegroundColor Green
+      "#,
         cl_path
     );
     let home = home_dir().ok_or("get home dir failed".red())?;
@@ -346,9 +352,9 @@ cd /d "{}"
     );
     let project_ps1_str = format!(
         r#"
-$env:Path = "{};" + $env:Path
-Set-Location "{}"
-        "#,
+  $env:Path = "{};{{0}}" -f $env:Path
+  Set-Location "{}"
+      "#,
         project_path, project_path
     );
     let home = home_dir().ok_or("get home dir failed".red())?;

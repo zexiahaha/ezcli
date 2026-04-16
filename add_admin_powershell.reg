@@ -1,0 +1,15 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\Directory\shell\OpenAdminPS]
+@="as Admin open PowerShell"
+"Icon"="powershell.exe,0"
+
+[HKEY_CLASSES_ROOT\Directory\shell\OpenAdminPS\command]
+@="powershell.exe -windowstyle hidden -Command \"Start-Process powershell.exe -ArgumentList '-NoExit', '-NoProfile', '-Command', 'Set-Location -LiteralPath \\\"%V\\\"' -Verb RunAs\""
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\OpenAdminPS]
+@="as Admin open PowerShell"
+"Icon"="powershell.exe,0"
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\OpenAdminPS\command]
+@="powershell.exe -windowstyle hidden -Command \"Start-Process powershell.exe -ArgumentList '-NoExit', '-NoProfile', '-Command', 'Set-Location -LiteralPath \\\"%V\\\"' -Verb RunAs\""

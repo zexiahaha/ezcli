@@ -1,8 +1,12 @@
 use clap::Parser;
+use colored::Colorize;
+use inquire::{Select, error::InquireError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::env::home_dir;
 use std::fs::{self, create_dir_all};
+use std::io;
 use std::mem;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
@@ -48,13 +52,13 @@ struct Cli {
     add_project: Option<String>,
 
     #[arg(short = 'w', long)]
-    show_project: Option<String>,
+    show_project: bool,
 
     #[arg(short, long)]
     del_project: bool,
 
     #[arg(short = 'c', long)]
-    switch_project: Option<String>,
+    switch_project: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -84,14 +88,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let cl_str = str.unwrap_or_else(|| "".to_string());
 
-        println!("file path is {cl_str}");
+        println!("file path is {}", cl_str.green().bold());
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
-            let config_file = get_config_path().ok_or("get config path failed!")?;
+            let config_file = get_config_path().ok_or("get config path failed!".red())?;
             let config_file_dir = config_file.parent().unwrap();
 
             if !config_file_dir.exists() {
-                create_dir_all(config_file_dir).map_err(|_| "create config dir failed!")?;
+                create_dir_all(config_file_dir).map_err(|_| "create config dir failed!".red())?;
             }
             if !config_file.exists() {
                 let default_config = Config {
@@ -101,16 +105,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let toml_content = toml::to_string_pretty(&default_config)
-                    .map_err(|_| "toml to_string_pretty failed!")?;
+                    .map_err(|_| "toml to_string_pretty failed!".red())?;
 
                 fs::write(&config_file, toml_content)
-                    .map_err(|_| "first write config file failed!")?;
+                    .map_err(|_| "first write config file failed!".red())?;
 
                 println!("already create new ezcli.toml!");
             } else {
-                let mut config = load_config().map_err(|_| "load config file failed!")?;
+                let mut config = load_config().map_err(|_| "load config file failed!".red())?;
                 config.vc_path = cl_str;
-                save_config(&config).map_err(|_| "save config file failed!")?;
+                save_config(&config).map_err(|_| "save config file failed!".red())?;
             }
         } else {
             println!("current file is not cl vcvarsall.bat!");
@@ -118,24 +122,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.show_cl {
-        let config = load_config().map_err(|_| "load config file failed!")?;
-        println!("{}", config.vc_path.as_str());
+        let config = load_config().map_err(|_| "load config file failed!".red())?;
+        println!("cl at {}", config.vc_path.as_str().green());
     }
 
     if cli.load_cl {
-        let config = load_config().map_err(|_| "load config file failed!")?;
+        let config = load_config().map_err(|_| "load config file failed!".red())?;
         if !config.vc_path.is_empty() {
             let vc = config.vc_path;
             let arch = config.default_arch;
 
             let command_str = if env::var("ConEmuDir").is_ok() {
-                println!("cmder environment detected!");
+                println!("{}", "cmder environment detected!".blue());
                 format!(
                     r#"/s /k "call "%ConEmuDir%\..\init.bat" && call "{}" {}""#,
                     vc, arch
                 )
             } else {
-                println!("raw cmd environment");
+                println!("{}", "raw cmd environment".blue());
                 format!(r#"/s /k "call "{}" {}""#, vc, arch)
             };
 
@@ -144,13 +148,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .status()
                 .unwrap();
         } else {
-            println!("no vc_path exists, please run find_cl!");
+            println!("{}", "no vc_path exists, please run find_cl!".red());
         }
     }
 
     if let Some(name) = cli.add_project.as_deref() {
-        println!("add new project: {name}");
-        println!("please find project path");
+        println!("add new project: {}", name.green());
+        println!("{}", "please find project path".yellow());
 
         let str = unsafe {
             let hwnd = GetConsoleWindow();
@@ -180,22 +184,89 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("project_path_str: {}", &project_path_str);
 
-        let mut config = load_config().map_err(|_| "load config file failed!")?;
+        let mut config = load_config().map_err(|_| "load config file failed!".red())?;
 
         add_project(&mut config, name, &project_path_str);
     }
 
-    if let Some(name) = cli.show_project.as_deref() {
-        let config = load_config().map_err(|_| "load config file failed!")?;
+    if cli.show_project {
+        let config = load_config().map_err(|_| "load config file failed!".red())?;
+        let projects_map: HashMap<String, String> = config
+            .projects
+            .iter()
+            .map(|p| (p.name.clone(), p.path.clone()))
+            .collect();
+        let project_names: Vec<&str> = projects_map.keys().map(|s| s.as_str()).collect();
 
-        let project = find_project(&config, name)
-            .ok_or(format!("there is no such project named {}", name))?;
+        let ans: Result<&str, InquireError> =
+            Select::new("select to show path", project_names).prompt();
 
-        println!("{name} project path is {}", project.path);
+        match ans {
+            Ok(choice) => {
+                let path = projects_map
+                    .get(choice)
+                    .ok_or("can't find the project".red())?;
+                println!("\n project {} path is {}", choice.green(), path.green());
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    "There was an error when select project to show, please try again"
+                        .red()
+                        .bold()
+                )
+            }
+        }
     }
 
-    if cli.del_project {}
+    if cli.del_project {
+        let config = load_config().map_err(|_| "load config file failed!".red())?;
+        let project_names: Vec<&str> = config.projects.iter().map(|p| p.name.as_str()).collect();
+        let options: Vec<&str> = project_names;
+
+        let ans: Result<&str, InquireError> = Select::new("select to delete", options).prompt();
+
+        match ans {
+            Ok(choice) => {
+                let answer = confirm_continue(
+                    format!("will delete {} project, continue?", choice.green()).as_str(),
+                );
+
+                if answer {
+                    let mut config = load_config().map_err(|_| "load config file failed!".red())?;
+                    delete_project(&mut config, choice);
+                }
+            }
+            Err(_) => {
+                println!(
+                    "{}",
+                    "There was an error when select project to delete, please try again"
+                        .red()
+                        .bold()
+                )
+            }
+        }
+    }
+
+    if cli.switch_project {}
     Ok(())
+}
+
+fn confirm_continue(prompt: &str) -> bool {
+    loop {
+        println!("{prompt} y/n");
+
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .expect(format!("{}", "read input line failed!".red().bold()).as_str());
+
+        match input.trim().to_lowercase().as_str() {
+            "y" => return true,
+            "n" => return false,
+            _ => println!("{}", "please input y or n \n".yellow()),
+        }
+    }
 }
 
 pub fn get_config_path() -> Option<PathBuf> {
@@ -208,24 +279,25 @@ pub fn get_config_path() -> Option<PathBuf> {
 }
 
 pub fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
-    let config_path = get_config_path().ok_or("get config path failed!")?;
+    let config_path = get_config_path().ok_or("get config path failed!".red())?;
     // println!("config_path: {:?}", &config_path.to_str());
     let content = fs::read_to_string(&config_path)?;
-    let data = toml::from_str(&content).map_err(|_| "toml from_str failed!")?;
+    let data = toml::from_str(&content).map_err(|_| "toml from_str failed!".red())?;
     Ok(data)
 }
 
 pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_path = get_config_path().ok_or("get config path failed!")?;
-    let content = toml::to_string_pretty(config).map_err(|_| "toml to_string_pretty failed!")?;
-    fs::write(config_path, content).map_err(|_| "write config failed!")?;
+    let config_path = get_config_path().ok_or("get config path failed!".red())?;
+    let content =
+        toml::to_string_pretty(config).map_err(|_| "toml to_string_pretty failed!".red())?;
+    fs::write(config_path, content).map_err(|_| "write config failed!".red())?;
     Ok(true)
 }
 
 pub fn add_project(config: &mut Config, name: &str, path: &str) {
     let exists = config.projects.iter().any(|p| p.name == name);
     if exists {
-        println!("project {name} already exists!");
+        println!("project {} already exists!", name.green().bold());
     }
 
     config.projects.push(Project {
@@ -239,6 +311,8 @@ pub fn add_project(config: &mut Config, name: &str, path: &str) {
 pub fn delete_project(config: &mut Config, name: &str) -> bool {
     let old_len = config.projects.len();
     config.projects.retain(|p| p.name != name);
+
+    let _ = save_config(&config);
     old_len != config.projects.len()
 }
 
@@ -246,6 +320,8 @@ pub fn update_project_path(config: &mut Config, name: &str, new_path: &str) -> b
     match config.projects.iter_mut().find(|p| p.name == name) {
         Some(proj) => {
             proj.path = new_path.to_string();
+
+            let _ = save_config(&config);
             true
         }
         None => false,

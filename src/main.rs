@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("file path is {cl_str}");
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
-            let config_file = get_config_path();
+            let config_file = get_config_path().ok_or("get config path failed!")?;
             let config_file_dir = config_file.parent().unwrap();
 
             if !config_file_dir.exists() {
@@ -106,9 +106,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("already create new ezcli.toml!");
             } else {
-                let mut config = load_config();
+                let mut config = load_config()?;
                 config.vc_path = cl_str;
-                save_config(&config);
+                save_config(&config)?;
             }
         } else {
             println!("current file is not cl vcvarsall.bat!");
@@ -116,12 +116,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.show_cl {
-        let config = load_config();
+        let config = load_config()?;
         println!("{}", config.vc_path.as_str());
     }
 
     if cli.load_cl {
-        let config = load_config();
+        let config = load_config()?;
         if !config.vc_path.is_empty() {
             let vc = config.vc_path;
             let arch = config.default_arch;
@@ -176,35 +176,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let project_path_str = str.unwrap_or_else(|| "".to_string());
 
-        let mut config = load_config();
+        let mut config = load_config()?;
 
         add_project(&mut config, name, &project_path_str);
     }
     Ok(())
 }
 
-pub fn get_config_path() -> PathBuf {
-    let home = if let Some(home) = home_dir() {
-        println!("home: {}", home.to_str().unwrap_or("home dir print failed"));
-        home.join(".ezcli").join("ezcli.toml")
-    } else {
-        println!("get home dir failed!");
-        PathBuf::new()
-    };
-    home
+pub fn get_config_path() -> Option<PathBuf> {
+    let home = home_dir()?;
+    println!("home: {}", home.to_str().unwrap_or("home dir print failed"));
+    Some(home.join(".ezcli").join("ezcli.toml"))
 }
 
-pub fn load_config() -> Config {
-    let config_path = get_config_path();
+pub fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
+    let config_path = get_config_path().ok_or("get config path failed!")?;
     println!("config_path: {:?}", &config_path.to_str());
-    let content = fs::read_to_string(&config_path).expect("read config failed!");
-    toml::from_str(&content).expect("parse config failed!")
+    let content = fs::read_to_string(&config_path)?;
+    let data = toml::from_str(&content)?;
+    Ok(data)
 }
 
-pub fn save_config(config: &Config) {
-    let config_path = get_config_path();
-    let content = toml::to_string_pretty(config).unwrap();
-    fs::write(config_path, content).expect("save config failed!");
+pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
+    let config_path = get_config_path().ok_or("get config path failed!")?;
+    let content = toml::to_string_pretty(config)?;
+    fs::write(config_path, content)?;
+    Ok(true)
 }
 
 pub fn add_project(config: &mut Config, name: &str, path: &str) {

@@ -310,15 +310,24 @@ call "{}" x64
 "#,
         cl_path
     );
+
+    let cl_ps1_str = format!(
+        r#"
+& "{}" x64
+        "#,
+        cl_path
+    );
     let home = home_dir().ok_or("get home dir failed".red())?;
     let cli_dir = home.join(".ezcli");
     let cl_bat_path = cli_dir.join("cl_l.bat");
+    let cl_ps1_path = cli_dir.join("cl_l.ps1");
 
     if !cli_dir.exists() {
         create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
     }
 
     fs::write(cl_bat_path, cl_bat_str)?;
+    fs::write(cl_ps1_path, cl_ps1_str)?;
 
     Ok(true)
 }
@@ -335,16 +344,25 @@ cd /d "{}"
 "#,
         project_path, project_path
     );
+    let project_ps1_str = format!(
+        r#"
+$env:Path = "{};" + $env:Path
+Set-Location "{}"
+        "#,
+        project_path, project_path
+    );
     let home = home_dir().ok_or("get home dir failed".red())?;
 
     let cli_dir = home.join(".ezcli");
     let project_bat_path = cli_dir.join(format!("{}_l.bat", name));
+    let project_ps1_path = cli_dir.join(format!("{}_l.ps1", name));
 
     if !cli_dir.exists() {
         create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
     }
 
     fs::write(project_bat_path, project_bat_str)?;
+    fs::write(project_ps1_path, project_ps1_str)?;
 
     Ok(true)
 }

@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let config_file_dir = config_file.parent().unwrap();
 
             if !config_file_dir.exists() {
-                create_dir_all(config_file_dir)?;
+                create_dir_all(config_file_dir).map_err(|_| "create config dir failed!")?;
             }
             if !config_file.exists() {
                 let default_config = Config {
@@ -100,15 +100,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     projects: vec![],
                 };
 
-                let toml_content = toml::to_string_pretty(&default_config)?;
+                let toml_content = toml::to_string_pretty(&default_config)
+                    .map_err(|_| "toml to_string_pretty failed!")?;
 
-                fs::write(&config_file, toml_content)?;
+                fs::write(&config_file, toml_content)
+                    .map_err(|_| "first write config file failed!")?;
 
                 println!("already create new ezcli.toml!");
             } else {
-                let mut config = load_config()?;
+                let mut config = load_config().map_err(|_| "load config file failed!")?;
                 config.vc_path = cl_str;
-                save_config(&config)?;
+                save_config(&config).map_err(|_| "save config file failed!")?;
             }
         } else {
             println!("current file is not cl vcvarsall.bat!");
@@ -116,12 +118,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.show_cl {
-        let config = load_config()?;
+        let config = load_config().map_err(|_| "load config file failed!")?;
         println!("{}", config.vc_path.as_str());
     }
 
     if cli.load_cl {
-        let config = load_config()?;
+        let config = load_config().map_err(|_| "load config file failed!")?;
         if !config.vc_path.is_empty() {
             let vc = config.vc_path;
             let arch = config.default_arch;
@@ -176,31 +178,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let project_path_str = str.unwrap_or_else(|| "".to_string());
 
-        let mut config = load_config()?;
+        println!("project_path_str: {}", &project_path_str);
+
+        let mut config = load_config().map_err(|_| "load config file failed!")?;
 
         add_project(&mut config, name, &project_path_str);
     }
+
+    if let Some(name) = cli.show_project.as_deref() {
+        let config = load_config().map_err(|_| "load config file failed!")?;
+
+        let project = find_project(&config, name)
+            .ok_or(format!("there is no such project named {}", name))?;
+
+        println!("{name} project path is {}", project.path);
+    }
+
+    if cli.del_project {}
     Ok(())
 }
 
 pub fn get_config_path() -> Option<PathBuf> {
     let home = home_dir()?;
-    println!("home: {}", home.to_str().unwrap_or("home dir print failed"));
+    // println!(
+    //     "home: {}",
+    //     home.to_str().unwrap_or("home dir print failed!")
+    // );
     Some(home.join(".ezcli").join("ezcli.toml"))
 }
 
 pub fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
     let config_path = get_config_path().ok_or("get config path failed!")?;
-    println!("config_path: {:?}", &config_path.to_str());
+    // println!("config_path: {:?}", &config_path.to_str());
     let content = fs::read_to_string(&config_path)?;
-    let data = toml::from_str(&content)?;
+    let data = toml::from_str(&content).map_err(|_| "toml from_str failed!")?;
     Ok(data)
 }
 
 pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
     let config_path = get_config_path().ok_or("get config path failed!")?;
-    let content = toml::to_string_pretty(config)?;
-    fs::write(config_path, content)?;
+    let content = toml::to_string_pretty(config).map_err(|_| "toml to_string_pretty failed!")?;
+    fs::write(config_path, content).map_err(|_| "write config failed!")?;
     Ok(true)
 }
 
@@ -214,6 +232,8 @@ pub fn add_project(config: &mut Config, name: &str, path: &str) {
         name: name.to_string(),
         path: path.to_string(),
     });
+
+    let _ = save_config(&config);
 }
 
 pub fn delete_project(config: &mut Config, name: &str) -> bool {

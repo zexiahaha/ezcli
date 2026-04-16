@@ -20,6 +20,8 @@ use windows::Win32::UI::Shell::{
     SHBrowseForFolderW, SHGetPathFromIDListW,
 };
 use windows::core::PWSTR;
+use winreg::RegKey;
+use winreg::enums::*;
 
 const MAX_PATH: u32 = 260;
 
@@ -91,6 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("file path is {}", cl_str.green().bold());
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
+            save_cl_bat(&cl_str)?;
+            add_ezcli_to_path()?;
             let config_file = get_config_path().ok_or("get config path failed!".red())?;
             let config_file_dir = config_file.parent().unwrap();
 
@@ -107,8 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let toml_content = toml::to_string_pretty(&default_config)
                     .map_err(|_| "toml to_string_pretty failed!".red())?;
 
-                fs::write(&config_file, toml_content)
-                    .map_err(|_| "first write config file failed!".red())?;
+                fs::write(&config_file, toml_content)?;
 
                 println!("already create new ezcli.toml!");
             } else {
@@ -186,6 +189,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut config = load_config().map_err(|_| "load config file failed!".red())?;
 
+        save_project_bat(name, &project_path_str)?;
+
         add_project(&mut config, name, &project_path_str);
     }
 
@@ -234,7 +239,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if answer {
                     let mut config = load_config().map_err(|_| "load config file failed!".red())?;
-                    delete_project(&mut config, choice);
+                    delete_project(&mut config, choice)?;
                 }
             }
             Err(_) => {
@@ -297,12 +302,114 @@ fn confirm_continue(prompt: &str) -> bool {
     }
 }
 
+pub fn save_cl_bat(cl_path: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let cl_bat_str = format!(
+        r#"
+@echo off
+call "{}" x64
+"#,
+        cl_path
+    );
+    let home = home_dir().ok_or("get home dir failed".red())?;
+    let cli_dir = home.join(".ezcli");
+    let cl_bat_path = cli_dir.join("cl_l.bat");
+
+    if !cli_dir.exists() {
+        create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
+    }
+
+    fs::write(cl_bat_path, cl_bat_str)?;
+
+    Ok(true)
+}
+
+pub fn save_project_bat(
+    name: &str,
+    project_path: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let project_bat_str = format!(
+        r#"
+@echo off
+set path={};%path%
+cd /d "{}"
+"#,
+        project_path, project_path
+    );
+    let home = home_dir().ok_or("get home dir failed".red())?;
+
+    let cli_dir = home.join(".ezcli");
+    let project_bat_path = cli_dir.join(format!("{}_l.bat", name));
+
+    if !cli_dir.exists() {
+        create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
+    }
+
+    fs::write(project_bat_path, project_bat_str)?;
+
+    Ok(true)
+}
+
+pub fn add_ezcli_to_path() -> Result<bool, Box<dyn std::error::Error>> {
+    let home = home_dir().ok_or("get home dir failed".red())?;
+    let cli_dir = home.join(".ezcli");
+    let cli_dir_str = cli_dir.to_str().unwrap_or("");
+
+    if !cli_dir.exists() {
+        create_dir_all(cli_dir_str).map_err(|_| "create config dir failed!".red())?;
+    }
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+
+    let env_key = hklm.open_subkey_with_flags(
+        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+        KEY_READ | KEY_WRITE,
+    )?;
+
+    let current: String = env_key.get_value("PATH").unwrap_or_default();
+
+    if !current
+        .split(';')
+        .any(|p| p.eq_ignore_ascii_case(cli_dir_str))
+    {
+        let new_path = if current.is_empty() {
+            cli_dir_str.to_string()
+        } else {
+            format!("{};{}", current, cli_dir_str)
+        };
+
+        env_key.set_value("PATH", &new_path)?;
+
+        println!("already let {} write into HKLM PATH", cli_dir_str.green());
+    } else {
+        println!("HKLM PATH already has {}, skip", cli_dir_str.green());
+    }
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let env_key = hkcu.open_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?;
+
+    let current: String = env_key.get_value("PATH").unwrap_or_default();
+
+    if !current
+        .split(';')
+        .any(|p| p.eq_ignore_ascii_case(cli_dir_str))
+    {
+        let new_path = if current.is_empty() {
+            cli_dir_str.to_string()
+        } else {
+            format!("{};{}", current, cli_dir_str)
+        };
+        env_key.set_value("PATH", &new_path)?;
+
+        println!("already let {} write into HKCU PATH", cli_dir_str.green());
+    } else {
+        println!("HKCU PATH already has {}, skip", cli_dir_str.green());
+    }
+
+    Ok(true)
+}
+
 pub fn get_config_path() -> Option<PathBuf> {
     let home = home_dir()?;
-    // println!(
-    //     "home: {}",
-    //     home.to_str().unwrap_or("home dir print failed!")
-    // );
     Some(home.join(".ezcli").join("ezcli.toml"))
 }
 
@@ -318,7 +425,7 @@ pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> 
     let config_path = get_config_path().ok_or("get config path failed!".red())?;
     let content =
         toml::to_string_pretty(config).map_err(|_| "toml to_string_pretty failed!".red())?;
-    fs::write(config_path, content).map_err(|_| "write config failed!".red())?;
+    fs::write(config_path, content)?;
     Ok(true)
 }
 
@@ -336,12 +443,19 @@ pub fn add_project(config: &mut Config, name: &str, path: &str) {
     let _ = save_config(&config);
 }
 
-pub fn delete_project(config: &mut Config, name: &str) -> bool {
+pub fn delete_project(config: &mut Config, name: &str) -> Result<bool, Box<dyn std::error::Error>> {
     let old_len = config.projects.len();
     config.projects.retain(|p| p.name != name);
 
+    let home = home_dir().ok_or("get home dir failed".red())?;
+
+    let cli_dir = home.join(".ezcli");
+    let project_bat_path = cli_dir.join(format!("{}_l.bat", name));
+
+    fs::remove_file(project_bat_path)?;
+
     let _ = save_config(&config);
-    old_len != config.projects.len()
+    Ok(old_len != config.projects.len())
 }
 
 pub fn update_project_path(config: &mut Config, name: &str, new_path: &str) -> bool {

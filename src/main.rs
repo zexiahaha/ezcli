@@ -1,7 +1,18 @@
-use clap::Parser;
+mod config;
+mod env_capture;
+mod render;
+
+use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
+use config::{
+    Config, Project, add_project, delete_project, find_project, get_config_path, load_config,
+    save_config,
+};
+use env_capture::capture_vcvars_env;
 use inquire::{Select, error::InquireError};
-use serde::{Deserialize, Serialize};
+use render::{ScriptPlan, ShellKind, render_cmd_script, render_powershell_script};
+use std::path::PathBuf;
+
 use std::collections::HashMap;
 use std::env;
 use std::env::home_dir;
@@ -9,7 +20,6 @@ use std::fs::{self, create_dir_all};
 use std::io;
 use std::mem;
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
 use std::process::Command;
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
@@ -41,22 +51,12 @@ impl Drop for ComInitializer {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Config {
-    pub vc_path: String,
-    pub default_arch: String,
-    pub projects: Vec<Project>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Project {
-    pub name: String,
-    pub path: String,
-}
-
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(short, long)]
     find_cl: bool,
 
@@ -79,8 +79,39 @@ struct Cli {
     switch_project: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum ShellArg {
+    Cmd,
+    Powershell,
+}
+
+#[derive(Debug, Eq, PartialEq, Subcommand)]
+enum EmitAction {
+    LoadCl,
+    EnterProject { name: String },
+}
+
+#[derive(Debug, Eq, PartialEq, Subcommand)]
+enum Commands {
+    Emit {
+        #[arg(long, value_enum)]
+        shell: ShellArg,
+
+        #[command(subcommand)]
+        action: EmitAction,
+    },
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    if let Some(Commands::Emit { shell, action }) = cli.command {
+        if let Err(error) = handle_emit(shell, action) {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
 
     if cli.find_cl {
         let mut file_buf = [0u16; MAX_PATH as usize];
@@ -174,32 +205,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(name) = cli.add_project.as_deref() {
         println!("add new project: {}", name.green());
         println!("{}", "please find project path".yellow());
-
-        // let str = unsafe {
-        //     let hwnd = GetConsoleWindow();
-
-        //     let mut bi = BROWSEINFOW {
-        //         hwndOwner: hwnd,
-        //         ulFlags: BIF_NEWDIALOGSTYLE | BIF_BROWSEINCLUDEURLS | BIF_NONEWFOLDERBUTTON,
-        //         ..Default::default()
-        //     };
-
-        //     let pidl = SHBrowseForFolderW(&mut bi);
-
-        //     let mut buffer = [0u16; MAX_PATH as usize];
-        //     if pidl.is_null() || !SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
-        //         None
-        //     } else {
-        //         if SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
-        //             let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-        //             Some(String::from_utf16_lossy(&buffer[..len]))
-        //         } else {
-        //             None
-        //         }
-        //     }
-        // };
-
-        // let project_path_str = str.unwrap_or_else(|| "".to_string());
 
         let project_path_str = select_folder_modern().unwrap_or("".to_string());
 
@@ -480,72 +485,61 @@ pub fn add_ezcli_to_path() -> Result<bool, Box<dyn std::error::Error>> {
     Ok(true)
 }
 
-pub fn get_config_path() -> Option<PathBuf> {
-    let home = home_dir()?;
-    Some(home.join(".ezcli").join("ezcli.toml"))
-}
-
-pub fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
-    let config_path = get_config_path().ok_or("get config path failed!".red())?;
-    // println!("config_path: {:?}", &config_path.to_str());
-    let content = fs::read_to_string(&config_path)?;
-    let data = toml::from_str(&content).map_err(|_| "toml from_str failed!".red())?;
-    Ok(data)
-}
-
-pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> {
-    let config_path = get_config_path().ok_or("get config path failed!".red())?;
-    let content =
-        toml::to_string_pretty(config).map_err(|_| "toml to_string_pretty failed!".red())?;
-    fs::write(config_path, content)?;
-    Ok(true)
-}
-
-pub fn add_project(config: &mut Config, name: &str, path: &str) {
-    let exists = config.projects.iter_mut().find(|p| p.name == name);
-    if let Some(project) = exists {
-        println!("project {} already exists!", name.green().bold());
-
-        project.path = path.to_string();
-    } else {
-        config.projects.push(Project {
-            name: name.to_string(),
-            path: path.to_string(),
-        });
+fn to_shell_kind(shell: ShellArg) -> ShellKind {
+    match shell {
+        ShellArg::Cmd => ShellKind::Cmd,
+        ShellArg::Powershell => ShellKind::Powershell,
     }
-
-    let _ = save_config(&config);
-
-    println!("update {} path success!", name);
 }
 
-pub fn delete_project(config: &mut Config, name: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    let old_len = config.projects.len();
-    config.projects.retain(|p| p.name != name);
+fn build_load_cl_script(
+    shell: ShellArg,
+    captured: std::collections::BTreeMap<String, String>,
+) -> String {
+    let plan = ScriptPlan {
+        set_env: captured,
+        prepend_path: Vec::new(),
+        cwd: None,
+    };
 
-    let home = home_dir().ok_or("get home dir failed".red())?;
-
-    let cli_dir = home.join(".ezcli");
-    let project_bat_path = cli_dir.join(format!("{}_l.bat", name));
-
-    fs::remove_file(project_bat_path)?;
-
-    let _ = save_config(&config);
-    Ok(old_len != config.projects.len())
+    match to_shell_kind(shell) {
+        ShellKind::Cmd => render_cmd_script(&plan),
+        ShellKind::Powershell => render_powershell_script(&plan),
+    }
 }
 
-pub fn update_project_path(config: &mut Config, name: &str, new_path: &str) -> bool {
-    match config.projects.iter_mut().find(|p| p.name == name) {
-        Some(proj) => {
-            proj.path = new_path.to_string();
+fn build_enter_project_script(shell: ShellArg, project: &Project) -> String {
+    let plan = ScriptPlan {
+        set_env: Default::default(),
+        prepend_path: vec![PathBuf::from(&project.path)],
+        cwd: Some(PathBuf::from(&project.path)),
+    };
 
-            let _ = save_config(&config);
-            true
+    match to_shell_kind(shell) {
+        ShellKind::Cmd => render_cmd_script(&plan),
+        ShellKind::Powershell => render_powershell_script(&plan),
+    }
+}
+
+fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::error::Error>> {
+    match action {
+        EmitAction::LoadCl => {
+            let config = load_config()?;
+            let captured = capture_vcvars_env(&config.vc_path, &config.default_arch)?;
+            print!("{}", build_load_cl_script(shell, captured));
+            Ok(())
         }
-        None => false,
-    }
-}
+        EmitAction::EnterProject { name } => {
+            let config = load_config()?;
+            let project = find_project(&config, &name).ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("project not found: {name}"),
+                )
+            })?;
 
-pub fn find_project<'a>(config: &'a Config, name: &'a str) -> Option<&'a Project> {
-    config.projects.iter().find(|p| p.name == name)
+            print!("{}", build_enter_project_script(shell, project));
+            Ok(())
+        }
+    }
 }

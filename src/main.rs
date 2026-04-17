@@ -11,19 +11,35 @@ use std::mem;
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
-use windows::Win32::System::Console::GetConsoleWindow;
+use windows::Win32::System::Com::{
+    CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
+};
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
-use windows::Win32::UI::Shell::{
-    BIF_BROWSEINCLUDEURLS, BIF_NEWDIALOGSTYLE, BIF_NONEWFOLDERBUTTON, BROWSEINFOW,
-    SHBrowseForFolderW, SHGetPathFromIDListW,
-};
+use windows::Win32::UI::Shell::{FILEOPENDIALOGOPTIONS, FOS_PICKFOLDERS, IFileOpenDialog};
 use windows::core::PWSTR;
 use winreg::RegKey;
 use winreg::enums::*;
 
 const MAX_PATH: u32 = 260;
+
+struct ComInitializer;
+impl ComInitializer {
+    fn new() -> Self {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        }
+        ComInitializer
+    }
+}
+impl Drop for ComInitializer {
+    fn drop(&mut self) {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Config {
@@ -159,33 +175,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("add new project: {}", name.green());
         println!("{}", "please find project path".yellow());
 
-        let str = unsafe {
-            let hwnd = GetConsoleWindow();
+        // let str = unsafe {
+        //     let hwnd = GetConsoleWindow();
 
-            let mut bi = BROWSEINFOW {
-                hwndOwner: hwnd,
-                ulFlags: BIF_NEWDIALOGSTYLE | BIF_BROWSEINCLUDEURLS | BIF_NONEWFOLDERBUTTON,
-                ..Default::default()
-            };
+        //     let mut bi = BROWSEINFOW {
+        //         hwndOwner: hwnd,
+        //         ulFlags: BIF_NEWDIALOGSTYLE | BIF_BROWSEINCLUDEURLS | BIF_NONEWFOLDERBUTTON,
+        //         ..Default::default()
+        //     };
 
-            let pidl = SHBrowseForFolderW(&mut bi);
+        //     let pidl = SHBrowseForFolderW(&mut bi);
 
-            let mut buffer = [0u16; MAX_PATH as usize];
-            if pidl.is_null() || !SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
-                None
-            } else {
-                if SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
-                    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-                    Some(String::from_utf16_lossy(&buffer[..len]))
-                } else {
-                    None
-                }
-            }
-        };
+        //     let mut buffer = [0u16; MAX_PATH as usize];
+        //     if pidl.is_null() || !SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
+        //         None
+        //     } else {
+        //         if SHGetPathFromIDListW(pidl, &mut buffer).as_bool() {
+        //             let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+        //             Some(String::from_utf16_lossy(&buffer[..len]))
+        //         } else {
+        //             None
+        //         }
+        //     }
+        // };
 
-        let project_path_str = str.unwrap_or_else(|| "".to_string());
+        // let project_path_str = str.unwrap_or_else(|| "".to_string());
 
-        println!("project_path_str: {}", &project_path_str);
+        let project_path_str = select_folder_modern().unwrap_or("".to_string());
+
+        println!("project_path_str: {}", &project_path_str.green());
 
         let mut config = load_config().map_err(|_| "load config file failed!".red())?;
 
@@ -299,6 +317,36 @@ fn confirm_continue(prompt: &str) -> bool {
             "n" => return false,
             _ => println!("{}", "please input y or n \n".yellow()),
         }
+    }
+}
+
+pub fn select_folder_modern() -> Option<String> {
+    unsafe {
+        let _com_init = ComInitializer::new();
+
+        let dialog_result: Result<IFileOpenDialog, windows::core::Error> =
+            CoCreateInstance(&windows::Win32::UI::Shell::FileOpenDialog, None, CLSCTX_ALL);
+
+        let dialog = dialog_result.ok()?;
+
+        let options: FILEOPENDIALOGOPTIONS = Default::default();
+        dialog.GetOptions().ok()?;
+        dialog.SetOptions(options | FOS_PICKFOLDERS).ok()?;
+
+        if dialog.Show(None).is_err() {
+            return None;
+        }
+
+        let item_result = dialog.GetResult();
+        let item = item_result.ok()?;
+
+        let display_name = item
+            .GetDisplayName(windows::Win32::UI::Shell::SIGDN_FILESYSPATH)
+            .ok()?;
+
+        let path = display_name.to_string().ok()?;
+
+        Some(path)
     }
 }
 
@@ -454,17 +502,21 @@ pub fn save_config(config: &Config) -> Result<bool, Box<dyn std::error::Error>> 
 }
 
 pub fn add_project(config: &mut Config, name: &str, path: &str) {
-    let exists = config.projects.iter().any(|p| p.name == name);
-    if exists {
+    let exists = config.projects.iter_mut().find(|p| p.name == name);
+    if let Some(project) = exists {
         println!("project {} already exists!", name.green().bold());
+
+        project.path = path.to_string();
+    } else {
+        config.projects.push(Project {
+            name: name.to_string(),
+            path: path.to_string(),
+        });
     }
 
-    config.projects.push(Project {
-        name: name.to_string(),
-        path: path.to_string(),
-    });
-
     let _ = save_config(&config);
+
+    println!("update {} path success!", name);
 }
 
 pub fn delete_project(config: &mut Config, name: &str) -> Result<bool, Box<dyn std::error::Error>> {

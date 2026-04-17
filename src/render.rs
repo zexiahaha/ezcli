@@ -22,7 +22,11 @@ pub fn render_powershell_script(plan: &ScriptPlan) -> String {
     let mut lines = Vec::new();
 
     for (key, value) in &plan.set_env {
-        lines.push(format!("$env:{key} = '{}'", ps_quote(value)));
+        lines.push(format!(
+            "Set-Item -LiteralPath 'Env:{}' -Value '{}'",
+            ps_quote(key),
+            ps_quote(value)
+        ));
     }
 
     if !plan.prepend_path.is_empty() {

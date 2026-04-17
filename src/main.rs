@@ -1,6 +1,7 @@
 mod config;
 mod env_capture;
 mod render;
+mod wrapper;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -12,6 +13,11 @@ use env_capture::capture_vcvars_env;
 use inquire::{Select, error::InquireError};
 use render::{ScriptPlan, ShellKind, render_cmd_script, render_powershell_script};
 use std::path::PathBuf;
+use wrapper::{
+    build_powershell_profile_source_line, get_powershell_profile_path,
+    install_powershell_profile_source_line, render_powershell_wrapper_script,
+    save_powershell_wrapper_script,
+};
 
 use std::collections::HashMap;
 use std::env;
@@ -89,6 +95,10 @@ enum ShellArg {
 enum EmitAction {
     LoadCl,
     EnterProject { name: String },
+    Init,
+    InstallWrapper,
+    ShowProfile,
+    InstallProfile,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
@@ -165,6 +175,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut config = load_config().map_err(|_| "load config file failed!".red())?;
                 config.vc_path = cl_str;
                 save_config(&config).map_err(|_| "save config file failed!".red())?;
+            }
+
+            let wrapper_path = install_wrapper(ShellArg::Powershell)?;
+            println!(
+                "powershell wrapper save to {}",
+                wrapper_path.display().to_string().green()
+            );
+
+            let answer = confirm_continue("write ezcli wrapper into Powershell profile?");
+
+            if answer {
+                let message = install_profile(ShellArg::Powershell)?;
+                println!("{}", message.green());
+            } else {
+                let profile_path = get_powershell_profile_path()?;
+                let source_line = build_powershell_profile_source_line()?;
+
+                println!("{}", "skip writing Powershell profile".yellow());
+                println!(
+                    "Powershell profile path: {}",
+                    profile_path.display().to_string().green()
+                );
+                println!(
+                    "you can manually add this line to your Powershell profile: {}",
+                    source_line.green()
+                );
             }
         } else {
             println!("current file is not cl vcvarsall.bat!");
@@ -521,6 +557,80 @@ fn build_enter_project_script(shell: ShellArg, project: &Project) -> String {
     }
 }
 
+fn build_init_script(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>> {
+    let program = env::current_exe()?;
+    let program = program.to_string_lossy().into_owned();
+
+    match to_shell_kind(shell) {
+        ShellKind::Powershell => Ok(render_powershell_wrapper_script(&program)),
+        ShellKind::Cmd => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cmd wrapper is not implemented yet",
+        )
+        .into()),
+    }
+}
+
+fn install_wrapper(shell: ShellArg) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let program = env::current_exe()?;
+    let program = program.to_string_lossy().into_owned();
+
+    match to_shell_kind(shell) {
+        ShellKind::Powershell => save_powershell_wrapper_script(&program),
+        ShellKind::Cmd => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cmd wrapper is not implemented yet",
+        )
+        .into()),
+    }
+}
+
+fn show_profile(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>> {
+    match to_shell_kind(shell) {
+        ShellKind::Powershell => {
+            let profile_path = get_powershell_profile_path()?;
+            let source_line = build_powershell_profile_source_line()?;
+
+            Ok(format!(
+                "profile path: {}\nsource line: {}",
+                profile_path.display(),
+                source_line
+            ))
+        }
+        ShellKind::Cmd => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cmd wrapper is not implemented yet",
+        )
+        .into()),
+    }
+}
+
+fn install_profile(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>> {
+    match to_shell_kind(shell) {
+        ShellKind::Powershell => {
+            let changed = install_powershell_profile_source_line()?;
+            let profile_path = get_powershell_profile_path()?;
+
+            if changed {
+                Ok(format!(
+                    "powershell profile updated: {}",
+                    profile_path.display()
+                ))
+            } else {
+                Ok(format!(
+                    "powershell profile already configured: {}",
+                    profile_path.display(),
+                ))
+            }
+        }
+        ShellKind::Cmd => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "cmd wrapper is not implemented yet",
+        )
+        .into()),
+    }
+}
+
 fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
         EmitAction::LoadCl => {
@@ -539,6 +649,23 @@ fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::e
             })?;
 
             print!("{}", build_enter_project_script(shell, project));
+            Ok(())
+        }
+        EmitAction::Init => {
+            print!("{}", build_init_script(shell)?);
+            Ok(())
+        }
+        EmitAction::InstallWrapper => {
+            let wrapper_path = install_wrapper(shell)?;
+            println!("powershell wrapper saved to {}", wrapper_path.display());
+            Ok(())
+        }
+        EmitAction::ShowProfile => {
+            print!("{}", show_profile(shell)?);
+            Ok(())
+        }
+        EmitAction::InstallProfile => {
+            print!("{}", install_profile(shell)?);
             Ok(())
         }
     }

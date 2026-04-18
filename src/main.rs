@@ -25,8 +25,6 @@ use std::env::home_dir;
 use std::fs::{self, create_dir_all};
 use std::io;
 use std::mem;
-use std::os::windows::process::CommandExt;
-use std::process::Command;
 use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
@@ -68,9 +66,6 @@ struct Cli {
 
     #[arg(short, long)]
     show_cl: bool,
-
-    #[arg(short, long)]
-    load_cl: bool,
 
     #[arg(short, long)]
     add_project: Option<String>,
@@ -185,6 +180,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             println!("open a new cmd.exe, then you can run:");
+            println!("  {}", "ecl".green());
+            println!("  {} {}", "ep".green(), "<name>".yellow());
+            println!("long commands are still available:");
             println!("  {}", "ezcli-load-cl".green());
             println!("  {} {}", "ezcli-enter-project".green(), "<name>".yellow());
             println!("if cmd was already open before PATH changed, reopen it first");
@@ -198,6 +196,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     wrapper_path.display().to_string().green()
                 );
             }
+            println!(
+                "  short commands: {} / {} {}",
+                "ecl".green(),
+                "ep".green(),
+                "<name>".yellow()
+            );
 
             println!();
 
@@ -228,32 +232,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.show_cl {
         let config = load_config().map_err(|_| "load config file failed!".red())?;
         println!("cl at {}", config.vc_path.as_str().green());
-    }
-
-    if cli.load_cl {
-        let config = load_config().map_err(|_| "load config file failed!".red())?;
-        if !config.vc_path.is_empty() {
-            let vc = config.vc_path;
-            let arch = config.default_arch;
-
-            let command_str = if env::var("ConEmuDir").is_ok() {
-                println!("{}", "cmder environment detected!".blue());
-                format!(
-                    r#"/s /k "call "%ConEmuDir%\..\init.bat" && call "{}" {}""#,
-                    vc, arch
-                )
-            } else {
-                println!("{}", "raw cmd environment".blue());
-                format!(r#"/s /k "call "{}" {}""#, vc, arch)
-            };
-
-            Command::new("cmd.exe")
-                .raw_arg(command_str)
-                .status()
-                .unwrap();
-        } else {
-            println!("{}", "no vc_path exists, please run find_cl!".red());
-        }
     }
 
     if let Some(name) = cli.add_project.as_deref() {

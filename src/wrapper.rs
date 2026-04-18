@@ -14,6 +14,7 @@ pub fn render_powershell_wrapper_script(program: &str) -> String {
         r#"
 function ezcli-load-cl {{
     & '{program}' emit --shell powershell load-cl | Invoke-Expression
+    Write-Host "cl environment loaded" -ForegroundColor Green
 }}
 
 function ezcli-enter-project {{
@@ -24,6 +25,8 @@ function ezcli-enter-project {{
 
     & '{program}' emit --shell powershell enter-project $Name | Invoke-Expression
 }}
+Set-Alias ecl ezcli-load-cl
+Set-Alias ep ezcli-enter-project
         "#
     )
 }
@@ -122,11 +125,49 @@ fn render_cmd_wrapper_script(program: &str, action_args: &str, temp_stem: &str) 
 }
 
 pub fn render_cmd_load_cl_wrapper_script(program: &str) -> String {
-    render_cmd_wrapper_script(program, "load-cl", "ezcli-load-cl")
+    // render_cmd_wrapper_script(program, "load-cl", "ezcli-load-cl")
+    let program = cmd_quote(program);
+
+    [
+        "@echo off".to_string(),
+        format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\ezcli-load-cl-%RANDOM%%RANDOM%.cmd""#),
+        format!(r#""{program}" emit --shell cmd load-cl > "%EZCLI_WRAPPER_TMP%""#),
+        "if errorlevel 1 goto :cleanup".to_string(),
+        r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        r#"echo cl environment loaded"#.to_string(),
+        ":cleanup".to_string(),
+        r#"if exist "%EZCLI_WRAPPER_TMP%" del "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        r#"set "EZCLI_WRAPPER_TMP=""#.to_string(),
+        String::new(),
+    ]
+    .join("\r\n")
 }
 
 pub fn render_cmd_enter_project_wrapper_script(program: &str) -> String {
     render_cmd_wrapper_script(program, "enter-project %*", "ezcli-enter-project")
+}
+
+pub fn render_cmd_ecl_wrapper_script(program: &str) -> String {
+    // render_cmd_wrapper_script(program, "load-cl", "ecl")
+    let program = cmd_quote(program);
+
+    [
+        "@echo off".to_string(),
+        format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\ecl-%RANDOM%%RANDOM%.cmd""#),
+        format!(r#""{program}" emit --shell cmd load-cl > "%EZCLI_WRAPPER_TMP%""#),
+        "if errorlevel 1 goto :cleanup".to_string(),
+        r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        r#"echo cl environment loaded"#.to_string(),
+        ":cleanup".to_string(),
+        r#"if exist "%EZCLI_WRAPPER_TMP%" del "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        r#"set "EZCLI_WRAPPER_TMP=""#.to_string(),
+        String::new(),
+    ]
+    .join("\r\n")
+}
+
+pub fn render_cmd_ep_wrapper_script(program: &str) -> String {
+    render_cmd_wrapper_script(program, "enter-project %*", "ep")
 }
 
 pub fn get_cmd_load_cl_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -140,10 +181,23 @@ pub fn get_cmd_enter_project_wrapper_path() -> Result<PathBuf, Box<dyn std::erro
         home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "get home dir failed"))?;
     Ok(home.join(".ezcli").join("ezcli-enter-project.cmd"))
 }
+pub fn get_cmd_ecl_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home =
+        home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "get home dir failed"))?;
+    Ok(home.join(".ezcli").join("ecl.cmd"))
+}
+
+pub fn get_cmd_ep_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home =
+        home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "get home dir failed"))?;
+    Ok(home.join(".ezcli").join("ep.cmd"))
+}
 
 pub fn save_cmd_wrapper_scripts(program: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let load_cl_path = get_cmd_load_cl_wrapper_path()?;
     let enter_project_path = get_cmd_enter_project_wrapper_path()?;
+    let ecl_path = get_cmd_ecl_wrapper_path()?;
+    let ep_path = get_cmd_ep_wrapper_path()?;
 
     if let Some(parent) = load_cl_path.parent() {
         create_dir_all(parent)?;
@@ -154,6 +208,8 @@ pub fn save_cmd_wrapper_scripts(program: &str) -> Result<Vec<PathBuf>, Box<dyn s
         &enter_project_path,
         render_cmd_enter_project_wrapper_script(program),
     )?;
+    fs::write(&ecl_path, render_cmd_ecl_wrapper_script(program))?;
+    fs::write(&ep_path, render_cmd_ep_wrapper_script(program))?;
 
     Ok(vec![load_cl_path, enter_project_path])
 }

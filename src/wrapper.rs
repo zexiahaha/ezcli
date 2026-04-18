@@ -99,3 +99,61 @@ pub fn install_powershell_profile_source_line() -> Result<bool, Box<dyn std::err
 
     Ok(true)
 }
+
+fn cmd_quote(value: &str) -> String {
+    value.replace('"', "\"\"")
+}
+
+fn render_cmd_wrapper_script(program: &str, action_args: &str, temp_stem: &str) -> String {
+    let program = cmd_quote(program);
+
+    [
+        "@echo off".to_string(),
+        format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\{temp_stem}-%RANDOM%%RANDOM%.cmd""#),
+        format!(r#""{program}" emit --shell cmd {action_args} > "%EZCLI_WRAPPER_TMP%""#),
+        "if errorlevel 1 goto :cleanup".to_string(),
+        r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        ":cleanup".to_string(),
+        r#"if exist "%EZCLI_WRAPPER_TMP%" del "%EZCLI_WRAPPER_TMP%""#.to_string(),
+        r#"set "EZCLI_WRAPPER_TMP=""#.to_string(),
+        String::new(),
+    ]
+    .join("\r\n")
+}
+
+pub fn render_cmd_load_cl_wrapper_script(program: &str) -> String {
+    render_cmd_wrapper_script(program, "load-cl", "ezcli-load-cl")
+}
+
+pub fn render_cmd_enter_project_wrapper_script(program: &str) -> String {
+    render_cmd_wrapper_script(program, "enter-project %*", "ezcli-enter-project")
+}
+
+pub fn get_cmd_load_cl_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home =
+        home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "get home dir failed"))?;
+    Ok(home.join(".ezcli").join("ezcli-load-cl.cmd"))
+}
+
+pub fn get_cmd_enter_project_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home =
+        home_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "get home dir failed"))?;
+    Ok(home.join(".ezcli").join("ezcli-enter-project.cmd"))
+}
+
+pub fn save_cmd_wrapper_scripts(program: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let load_cl_path = get_cmd_load_cl_wrapper_path()?;
+    let enter_project_path = get_cmd_enter_project_wrapper_path()?;
+
+    if let Some(parent) = load_cl_path.parent() {
+        create_dir_all(parent)?;
+    }
+
+    fs::write(&load_cl_path, render_cmd_load_cl_wrapper_script(program))?;
+    fs::write(
+        &enter_project_path,
+        render_cmd_enter_project_wrapper_script(program),
+    )?;
+
+    Ok(vec![load_cl_path, enter_project_path])
+}

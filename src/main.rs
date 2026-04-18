@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use wrapper::{
     build_powershell_profile_source_line, get_powershell_profile_path,
     install_powershell_profile_source_line, render_powershell_wrapper_script,
-    save_powershell_wrapper_script,
+    save_cmd_wrapper_scripts, save_powershell_wrapper_script,
 };
 
 use std::collections::HashMap;
@@ -150,7 +150,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("file path is {}", cl_str.green().bold());
 
         if cl_str.as_str().ends_with("vcvarsall.bat") {
-            save_cl_bat(&cl_str)?;
             add_ezcli_to_path()?;
             let config_file = get_config_path().ok_or("get config path failed!".red())?;
             let config_file_dir = config_file.parent().unwrap();
@@ -176,29 +175,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 config.vc_path = cl_str;
                 save_config(&config).map_err(|_| "save config file failed!".red())?;
             }
+            println!("{}", "config updated:".green().bold());
+            println!("  vcvarsall.bat saved to ezcli config");
 
-            let wrapper_path = install_wrapper(ShellArg::Powershell)?;
-            println!(
-                "powershell wrapper save to {}",
-                wrapper_path.display().to_string().green()
-            );
+            println!();
+            println!("{}", "cmd setup:".green().bold());
+            let cmd_wrapper_path = install_wrapper(ShellArg::Cmd)?;
+            for wrapper_path in cmd_wrapper_path {
+                println!(
+                    "cmd wrapper save to {}",
+                    wrapper_path.display().to_string().green()
+                );
+            }
+            println!("open a new cmd.exe, then you can run:");
+            println!("  {}", "ezcli-load-cl".green());
+            println!("  {} {}", "ezcli-enter-project".green(), "<name>".yellow());
+            println!("if cmd was already open before PATH changed, reopen it first");
+
+            println!();
+            println!("{}", "powershell setup:".green().bold());
+            let powershell_wrapper_path = install_wrapper(ShellArg::Powershell)?;
+            if let Some(wrapper_path) = powershell_wrapper_path.first() {
+                println!(
+                    "powershell wrapper save to {}",
+                    wrapper_path.display().to_string().green()
+                );
+            }
+
+            println!();
 
             let answer = confirm_continue("write ezcli wrapper into Powershell profile?");
 
             if answer {
                 let message = install_profile(ShellArg::Powershell)?;
-                println!("{}", message.green());
+                println!("  {}", message.green());
             } else {
                 let profile_path = get_powershell_profile_path()?;
                 let source_line = build_powershell_profile_source_line()?;
 
-                println!("{}", "skip writing Powershell profile".yellow());
+                println!("  {}", "skip writing Powershell profile".yellow());
                 println!(
-                    "Powershell profile path: {}",
+                    "  Powershell profile path: {}",
                     profile_path.display().to_string().green()
                 );
                 println!(
-                    "you can manually add this line to your Powershell profile: {}",
+                    "  you can manually add this line to your Powershell profile: {}",
                     source_line.green()
                 );
             }
@@ -247,8 +268,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("project_path_str: {}", &project_path_str.green());
 
         let mut config = load_config().map_err(|_| "load config file failed!".red())?;
-
-        save_project_bat(name, &project_path_str)?;
 
         add_project(&mut config, name, &project_path_str);
     }
@@ -391,77 +410,6 @@ pub fn select_folder_modern() -> Option<String> {
     }
 }
 
-pub fn save_cl_bat(cl_path: &str) -> Result<bool, Box<dyn std::error::Error>> {
-    let cl_bat_str = format!(
-        r#"
-@echo off
-call "{}" x64
-"#,
-        cl_path
-    );
-
-    let cl_ps1_str = format!(
-        r#"
-  $cmd = "`"{}`" x64 && set"
-  cmd /c $cmd | ForEach-Object {{
-      if ($_ -match '^([^=]+)=(.*)$') {{
-          Set-Item -Path "env:$($matches[1])" -Value $matches[2]
-      }}
-  }}
-  Write-Host "Visual Studio 2026 Developer Command Prompt environment already loaded" -ForegroundColor Green
-      "#,
-        cl_path
-    );
-    let home = home_dir().ok_or("get home dir failed".red())?;
-    let cli_dir = home.join(".ezcli");
-    let cl_bat_path = cli_dir.join("cl_l.bat");
-    let cl_ps1_path = cli_dir.join("cl_l.ps1");
-
-    if !cli_dir.exists() {
-        create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
-    }
-
-    fs::write(cl_bat_path, cl_bat_str)?;
-    fs::write(cl_ps1_path, cl_ps1_str)?;
-
-    Ok(true)
-}
-
-pub fn save_project_bat(
-    name: &str,
-    project_path: &str,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    let project_bat_str = format!(
-        r#"
-@echo off
-set path={};%path%
-cd /d "{}"
-"#,
-        project_path, project_path
-    );
-    let project_ps1_str = format!(
-        r#"
-  $env:Path = "{};{{0}}" -f $env:Path
-  Set-Location "{}"
-      "#,
-        project_path, project_path
-    );
-    let home = home_dir().ok_or("get home dir failed".red())?;
-
-    let cli_dir = home.join(".ezcli");
-    let project_bat_path = cli_dir.join(format!("{}_l.bat", name));
-    let project_ps1_path = cli_dir.join(format!("{}_l.ps1", name));
-
-    if !cli_dir.exists() {
-        create_dir_all(cli_dir).map_err(|_| "create config dir failed!".red())?;
-    }
-
-    fs::write(project_bat_path, project_bat_str)?;
-    fs::write(project_ps1_path, project_ps1_str)?;
-
-    Ok(true)
-}
-
 pub fn add_ezcli_to_path() -> Result<bool, Box<dyn std::error::Error>> {
     let home = home_dir().ok_or("get home dir failed".red())?;
     let cli_dir = home.join(".ezcli");
@@ -565,23 +513,19 @@ fn build_init_script(shell: ShellArg) -> Result<String, Box<dyn std::error::Erro
         ShellKind::Powershell => Ok(render_powershell_wrapper_script(&program)),
         ShellKind::Cmd => Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "cmd wrapper is not implemented yet",
+            "cmd init is not supported; use `ezcli emit --shell cmd install-wrapper` instead",
         )
         .into()),
     }
 }
 
-fn install_wrapper(shell: ShellArg) -> Result<PathBuf, Box<dyn std::error::Error>> {
+fn install_wrapper(shell: ShellArg) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let program = env::current_exe()?;
     let program = program.to_string_lossy().into_owned();
 
     match to_shell_kind(shell) {
-        ShellKind::Powershell => save_powershell_wrapper_script(&program),
-        ShellKind::Cmd => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "cmd wrapper is not implemented yet",
-        )
-        .into()),
+        ShellKind::Powershell => Ok(vec![save_powershell_wrapper_script(&program)?]),
+        ShellKind::Cmd => save_cmd_wrapper_scripts(&program),
     }
 }
 
@@ -599,7 +543,7 @@ fn show_profile(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>> {
         }
         ShellKind::Cmd => Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "cmd wrapper is not implemented yet",
+            "cmd has no profile support; use `ezcli emit --shell cmd install-wrapper` instead",
         )
         .into()),
     }
@@ -625,7 +569,7 @@ fn install_profile(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>
         }
         ShellKind::Cmd => Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "cmd wrapper is not implemented yet",
+            "cmd has no profile support; use `ezcli emit --shell cmd install-wrapper` instead",
         )
         .into()),
     }
@@ -656,8 +600,10 @@ fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::e
             Ok(())
         }
         EmitAction::InstallWrapper => {
-            let wrapper_path = install_wrapper(shell)?;
-            println!("powershell wrapper saved to {}", wrapper_path.display());
+            let wrapper_paths = install_wrapper(shell)?;
+            for wrapper_path in wrapper_paths {
+                println!("powershell wrapper saved to {}", wrapper_path.display());
+            }
             Ok(())
         }
         EmitAction::ShowProfile => {

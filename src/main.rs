@@ -56,46 +56,83 @@ impl Drop for ComInitializer {
 }
 
 #[derive(Parser)]
-#[command(version, about, long_about = None)]
+#[command(version, about = "Windows shell wrapper helper for MSVC and project switching", long_about = None, after_help = "\
+  Installed wrapper commands after `ezcli --find-cl`:
+    ecl                         Load MSVC cl environment into current shell
+    ep <name>                   Enter project and prepend project path
+    ezcli-load-cl               Long wrapper command for ecl
+    ezcli-enter-project <name>  Long wrapper command for ep
+
+  Examples:
+    ezcli --find-cl
+    ecl
+    ep handmade
+    ezcli emit --shell powershell load-cl
+  "
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
+    /// Run a setup wizard to find vcvarsall.bat and install shell wrappers.
     #[arg(short, long)]
     find_cl: bool,
 
+    /// Show the configured vcvarsall.bat path.
     #[arg(short, long)]
     show_cl: bool,
 
+    /// Add a project path to ezcli config.
     #[arg(short, long)]
     add_project: Option<String>,
 
+    /// Select a project and show its configured path.
     #[arg(short = 'w', long)]
     show_project: bool,
 
+    /// Select and delete a project from ezcli config.
     #[arg(short, long)]
     del_project: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum ShellArg {
+    /// Emit cmd.exe compatible script.
     Cmd,
+
+    /// Emit Windows PowerShell compatible script.
     Powershell,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 enum EmitAction {
+    /// Emit script to load the MSVC cl environment.
     LoadCl,
-    EnterProject { name: String },
+
+    /// Emit script to enter a configured project.
+    EnterProject {
+        /// Project name from ezcli config.
+        name: String,
+    },
+
+    /// Emit wrapper bootstrap script for the selected shell.
     Init,
+
+    /// Install wrapper files for the selected shell.
     InstallWrapper,
+
+    /// Show profile information for the selected shell.
     ShowProfile,
+
+    /// Install profile integration for the selected shell.
     InstallProfile,
 }
 
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 enum Commands {
+    /// Emit shell script or install shell wrappers.
     Emit {
+        /// Target shell for emitted scripts or wrappers.
         #[arg(long, value_enum)]
         shell: ShellArg,
 

@@ -1,7 +1,17 @@
 [package]
-name = "ezcli"
+name = "ezcli-win"
 version = "0.1.0"
 edition = "2024"
+description = "Windows shell helper for developer workflows such as loading MSVC environments and switching projects"
+readme = "README.md"
+repository = "https://github.com/zexiahaha/ezcli"
+license = "MIT OR Apache-2.0"
+keywords = ["cli", "windows", "shell", "msvc"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "ezcli"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }

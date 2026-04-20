@@ -1,7 +1,16 @@
 use std::env::home_dir;
 use std::fs::{self, create_dir_all};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+fn write_utf8_with_bom(path: &Path, content: &str) -> io::Result<()> {
+    let mut bytes = Vec::with_capacity(UTF8_BOM.len() + content.len());
+    bytes.extend_from_slice(UTF8_BOM);
+    bytes.extend_from_slice(content.as_bytes());
+
+    fs::write(path, bytes)
+}
 
 fn ps_quote(value: &str) -> String {
     value.replace('\'', "''")
@@ -48,7 +57,7 @@ pub fn save_powershell_wrapper_script(
     }
 
     let script = render_powershell_wrapper_script(program);
-    fs::write(&wrapper_path, script)?;
+    write_utf8_with_bom(&wrapper_path, &script)?;
 
     Ok(wrapper_path)
 }
@@ -64,10 +73,12 @@ pub fn get_powershell_profile_path() -> Result<PathBuf, Box<dyn std::error::Erro
 }
 
 pub fn build_powershell_profile_source_line() -> Result<String, Box<dyn std::error::Error>> {
-    let wrapper_path = get_powershell_wrapper_path()?;
-    let source_line = ps_quote(&wrapper_path.to_string_lossy());
+    // let wrapper_path = get_powershell_wrapper_path()?;
+    // let source_line = ps_quote(&wrapper_path.to_string_lossy());
 
-    Ok(format!(". '{}'", source_line))
+    // Ok(format!(". '{}'", source_line))
+
+    Ok(r". (Join-Path $HOME '.ezcli\ezcli-wrapper.ps1')".to_string())
 }
 
 pub fn install_powershell_profile_source_line() -> Result<bool, Box<dyn std::error::Error>> {
@@ -84,6 +95,10 @@ pub fn install_powershell_profile_source_line() -> Result<bool, Box<dyn std::err
         Err(error) => return Err(error.into()),
     };
 
+    if content.starts_with('\u{feff}') {
+        content.remove(0);
+    }
+
     if content
         .lines()
         .any(|line| line.trim() == source_line.as_str())
@@ -98,7 +113,7 @@ pub fn install_powershell_profile_source_line() -> Result<bool, Box<dyn std::err
     content.push_str(&source_line);
     content.push('\n');
 
-    fs::write(profile_path, content)?;
+    write_utf8_with_bom(&profile_path, &content)?;
 
     Ok(true)
 }

@@ -1,9 +1,11 @@
+mod cmd_encoding;
 mod config;
 mod env_capture;
 mod render;
 mod wrapper;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use cmd_encoding::write_cmd_script_with_current_code_page;
 use colored::Colorize;
 use config::{
     Config, Project, add_project, delete_project, find_project, get_config_path, load_config,
@@ -107,12 +109,17 @@ enum ShellArg {
 #[derive(Debug, Eq, PartialEq, Subcommand)]
 enum EmitAction {
     /// Emit script to load the MSVC cl environment.
-    LoadCl,
+    LoadCl {
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 
     /// Emit script to enter a configured project.
     EnterProject {
         /// Project name from ezcli config.
         name: String,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
 
     /// Emit wrapper bootstrap script for the selected shell.
@@ -463,9 +470,10 @@ fn build_load_cl_script(
     shell: ShellArg,
     captured: std::collections::BTreeMap<String, String>,
 ) -> String {
+    let home = home_dir().expect("get home dir failed");
     let plan = ScriptPlan {
         set_env: captured,
-        prepend_path: Vec::new(),
+        prepend_path: vec![home.join(".ezcli"), home.join(".cargo").join("bin")],
         cwd: None,
     };
 
@@ -503,12 +511,13 @@ fn build_init_script(shell: ShellArg) -> Result<String, Box<dyn std::error::Erro
 }
 
 fn install_wrapper(shell: ShellArg) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let program = env::current_exe()?;
-    let program = program.to_string_lossy().into_owned();
-
     match to_shell_kind(shell) {
-        ShellKind::Powershell => Ok(vec![save_powershell_wrapper_script(&program)?]),
-        ShellKind::Cmd => save_cmd_wrapper_scripts(&program),
+        ShellKind::Powershell => {
+            let program = env::current_exe()?;
+            let program = program.to_string_lossy().into_owned();
+            Ok(vec![save_powershell_wrapper_script(&program)?])
+        }
+        ShellKind::Cmd => save_cmd_wrapper_scripts(),
     }
 }
 
@@ -560,13 +569,22 @@ fn install_profile(shell: ShellArg) -> Result<String, Box<dyn std::error::Error>
 
 fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::error::Error>> {
     match action {
-        EmitAction::LoadCl => {
+        EmitAction::LoadCl { output } => {
             let config = load_config()?;
             let captured = capture_vcvars_env(&config.vc_path, &config.default_arch)?;
-            print!("{}", build_load_cl_script(shell, captured));
+            let script = build_load_cl_script(shell, captured);
+
+            if let Some(path) = output {
+                match to_shell_kind(shell) {
+                    ShellKind::Cmd => write_cmd_script_with_current_code_page(&path, &script)?,
+                    ShellKind::Powershell => fs::write(&path, script)?,
+                }
+            } else {
+                print!("{}", script);
+            }
             Ok(())
         }
-        EmitAction::EnterProject { name } => {
+        EmitAction::EnterProject { name, output } => {
             let config = load_config()?;
             let project = find_project(&config, &name).ok_or_else(|| {
                 std::io::Error::new(
@@ -574,8 +592,17 @@ fn handle_emit(shell: ShellArg, action: EmitAction) -> Result<(), Box<dyn std::e
                     format!("project not found: {name}"),
                 )
             })?;
+            let script = build_enter_project_script(shell, project);
 
-            print!("{}", build_enter_project_script(shell, project));
+            if let Some(path) = output {
+                match to_shell_kind(shell) {
+                    ShellKind::Cmd => write_cmd_script_with_current_code_page(&path, &script)?,
+                    ShellKind::Powershell => fs::write(&path, script)?,
+                }
+            } else {
+                print!("{}", script);
+            }
+
             Ok(())
         }
         EmitAction::Init => {

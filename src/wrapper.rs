@@ -118,17 +118,16 @@ pub fn install_powershell_profile_source_line() -> Result<bool, Box<dyn std::err
     Ok(true)
 }
 
-fn cmd_quote(value: &str) -> String {
-    value.replace('"', "\"\"")
-}
-
-fn render_cmd_wrapper_script(program: &str, action_args: &str, temp_stem: &str) -> String {
-    let program = cmd_quote(program);
-
+fn render_cmd_wrapper_script(action_args: &str, temp_stem: &str) -> String {
     [
         "@echo off".to_string(),
+        "where ezcli >nul 2>nul".to_string(),
+        "if errorlevel 1 (".to_string(),
+        "  echo ezcli not found in PATH".to_string(),
+        "  exit /b 1".to_string(),
+        ")".to_string(),
         format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\{temp_stem}-%RANDOM%%RANDOM%.cmd""#),
-        format!(r#""{program}" emit --shell cmd {action_args} > "%EZCLI_WRAPPER_TMP%""#),
+        format!(r#"ezcli emit --shell cmd {action_args} --output "%EZCLI_WRAPPER_TMP%""#),
         "if errorlevel 1 goto :cleanup".to_string(),
         r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
         ":cleanup".to_string(),
@@ -139,14 +138,16 @@ fn render_cmd_wrapper_script(program: &str, action_args: &str, temp_stem: &str) 
     .join("\r\n")
 }
 
-pub fn render_cmd_load_cl_wrapper_script(program: &str) -> String {
-    // render_cmd_wrapper_script(program, "load-cl", "ezcli-load-cl")
-    let program = cmd_quote(program);
-
+pub fn render_cmd_load_cl_wrapper_script() -> String {
     [
         "@echo off".to_string(),
+        "where ezcli >nul 2>nul".to_string(),
+        "if errorlevel 1 (".to_string(),
+        "  echo ezcli not found in PATH".to_string(),
+        "  exit /b 1".to_string(),
+        ")".to_string(),
         format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\ezcli-load-cl-%RANDOM%%RANDOM%.cmd""#),
-        format!(r#""{program}" emit --shell cmd load-cl > "%EZCLI_WRAPPER_TMP%""#),
+        format!(r#"ezcli emit --shell cmd load-cl --output "%EZCLI_WRAPPER_TMP%""#),
         "if errorlevel 1 goto :cleanup".to_string(),
         r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
         r#"echo cl environment loaded"#.to_string(),
@@ -158,18 +159,20 @@ pub fn render_cmd_load_cl_wrapper_script(program: &str) -> String {
     .join("\r\n")
 }
 
-pub fn render_cmd_enter_project_wrapper_script(program: &str) -> String {
-    render_cmd_wrapper_script(program, "enter-project %*", "ezcli-enter-project")
+pub fn render_cmd_enter_project_wrapper_script() -> String {
+    render_cmd_wrapper_script("enter-project %*", "ezcli-enter-project")
 }
 
-pub fn render_cmd_ecl_wrapper_script(program: &str) -> String {
-    // render_cmd_wrapper_script(program, "load-cl", "ecl")
-    let program = cmd_quote(program);
-
+pub fn render_cmd_ecl_wrapper_script() -> String {
     [
         "@echo off".to_string(),
+        "where ezcli >nul 2>nul".to_string(),
+        "if errorlevel 1 (".to_string(),
+        "  echo ezcli not found in PATH".to_string(),
+        "  exit /b 1".to_string(),
+        ")".to_string(),
         format!(r#"set "EZCLI_WRAPPER_TMP=%TEMP%\ecl-%RANDOM%%RANDOM%.cmd""#),
-        format!(r#""{program}" emit --shell cmd load-cl > "%EZCLI_WRAPPER_TMP%""#),
+        format!(r#"ezcli emit --shell cmd load-cl --output "%EZCLI_WRAPPER_TMP%""#),
         "if errorlevel 1 goto :cleanup".to_string(),
         r#"call "%EZCLI_WRAPPER_TMP%""#.to_string(),
         r#"echo cl environment loaded"#.to_string(),
@@ -181,8 +184,8 @@ pub fn render_cmd_ecl_wrapper_script(program: &str) -> String {
     .join("\r\n")
 }
 
-pub fn render_cmd_ep_wrapper_script(program: &str) -> String {
-    render_cmd_wrapper_script(program, "enter-project %*", "ep")
+pub fn render_cmd_ep_wrapper_script() -> String {
+    render_cmd_wrapper_script("enter-project %*", "ep")
 }
 
 pub fn get_cmd_load_cl_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -208,7 +211,7 @@ pub fn get_cmd_ep_wrapper_path() -> Result<PathBuf, Box<dyn std::error::Error>> 
     Ok(home.join(".ezcli").join("ep.cmd"))
 }
 
-pub fn save_cmd_wrapper_scripts(program: &str) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+pub fn save_cmd_wrapper_scripts() -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let load_cl_path = get_cmd_load_cl_wrapper_path()?;
     let enter_project_path = get_cmd_enter_project_wrapper_path()?;
     let ecl_path = get_cmd_ecl_wrapper_path()?;
@@ -218,13 +221,13 @@ pub fn save_cmd_wrapper_scripts(program: &str) -> Result<Vec<PathBuf>, Box<dyn s
         create_dir_all(parent)?;
     }
 
-    fs::write(&load_cl_path, render_cmd_load_cl_wrapper_script(program))?;
+    fs::write(&load_cl_path, render_cmd_load_cl_wrapper_script())?;
     fs::write(
         &enter_project_path,
-        render_cmd_enter_project_wrapper_script(program),
+        render_cmd_enter_project_wrapper_script(),
     )?;
-    fs::write(&ecl_path, render_cmd_ecl_wrapper_script(program))?;
-    fs::write(&ep_path, render_cmd_ep_wrapper_script(program))?;
+    fs::write(&ecl_path, render_cmd_ecl_wrapper_script())?;
+    fs::write(&ep_path, render_cmd_ep_wrapper_script())?;
 
     Ok(vec![load_cl_path, enter_project_path])
 }

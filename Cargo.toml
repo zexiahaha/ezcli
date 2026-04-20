@@ -21,7 +21,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 windows = { version = "0.62.2", features = [
     "Win32_UI_Controls_Dialogs",
-    "Win32_UI_Shell_Common",  
+    "Win32_UI_Shell_Common",
     "Win32_Foundation",
-    "Win32_System_Com",] }
+    "Win32_System_Com",
+    "Win32_Globalization",
+    "Win32_System_Console",
+] }
 winreg = "0.56.0"

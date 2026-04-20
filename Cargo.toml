@@ -1,6 +1,6 @@
 [package]
 name = "ezcli-win"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Windows shell helper for developer workflows such as loading MSVC environments and switching projects"
 readme = "README.md"
